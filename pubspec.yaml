@@ -1,0 +1,28 @@
+name: mirpur_zoo_guide
+description: An offline, kid-friendly interactive map and guide for the Mirpur National Zoo.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_map: ^7.0.2
+  geolocator: ^12.0.0
+  latlong2: ^0.9.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # The cleaned zoo map data (paths, cages, amenities).
+    - assets/map_data/zoo_data.geojson
+    # Optional animal photos. Drop files named like "royal_bengal_tiger.png" here.
+    - assets/images/animals/
