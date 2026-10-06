@@ -33,7 +33,7 @@ import 'simulation.dart';
 // ---------------------------------------------------------------------------
 
 const LatLng kZooCenter = LatLng(23.8115, 90.3475);
-const LatLng kZooGate = LatLng(23.8119, 90.3512);
+const LatLng kZooGate = LatLng(23.812549, 90.346991); // National Zoo Main Gate
 const double kInitialZoom = 16.5;
 const String kGeoJsonAsset = 'assets/map_data/zoo_data.geojson';
 
@@ -43,22 +43,19 @@ const double kLabelZoom = 17.8;
 /// Two markers with the same species closer than this are treated as duplicates.
 const double kDuplicateDistanceMeters = 60;
 
-/// Virtual walking route inside Mirpur Zoo for simulation testing.
+/// Virtual walking route inside Mirpur Zoo starting directly from Main Gate.
 const List<LatLng> kSimulationRoute = [
-  LatLng(23.8119, 90.3512), // Zoo Main Gate
-  LatLng(23.8122, 90.3501), // Entering walkway
-  LatLng(23.8125, 90.3491), // Lake side walkway
-  LatLng(23.8129, 90.3482), // Lake bridge
-  LatLng(23.8135, 90.3475), // Central junction
-  LatLng(23.8143, 90.3472), // Giraffe avenue
-  LatLng(23.8152, 90.3471), // Path to Tiger area
-  LatLng(23.8158, 90.3473), // Royal Bengal Tiger cage
-  LatLng(23.8163, 90.3465), // Indian Lion cage
-  LatLng(23.8156, 90.3457), // Big cats & carnivores
-  LatLng(23.8147, 90.3453), // Hippo & Rhino
-  LatLng(23.8136, 90.3459), // Chimpanzee & Monkeys
-  LatLng(23.8125, 90.3470), // South garden
-  LatLng(23.8117, 90.3490), // Returning towards Gate
+  LatLng(23.812549, 90.346991), // Main Gate
+  LatLng(23.8135, 90.3475),     // Central walkway junction
+  LatLng(23.8143, 90.3472),     // Giraffe avenue
+  LatLng(23.8152, 90.3471),     // Path to Tiger area
+  LatLng(23.8158, 90.3473),     // Royal Bengal Tiger cage
+  LatLng(23.8163, 90.3465),     // Indian Lion cage
+  LatLng(23.8156, 90.3457),     // Big cats & carnivores
+  LatLng(23.8147, 90.3453),     // Hippo & Rhino
+  LatLng(23.8136, 90.3459),     // Chimpanzee & Monkeys
+  LatLng(23.8128, 90.3472),     // South garden & lake
+  LatLng(23.812549, 90.346991), // Return to Main Gate
 ];
 
 class Palette {
@@ -821,6 +818,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
   StreamSubscription<Position>? _positionSub;
 
   // Road Routing & Smooth Simulation Engine
+  ZooData? _cachedData;
   final ZooGraphRouter _router = ZooGraphRouter();
   final SmoothSimulationEngine _simulationEngine = SmoothSimulationEngine();
   List<LatLng> _navigationRoute = [];
@@ -872,6 +870,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
   Future<ZooData> _loadData() async {
     final text = await rootBundle.loadString(kGeoJsonAsset);
     final data = ZooData.parse(text);
+    _cachedData = data;
     _router.buildGraph(data.paths.map((p) => p.points).toList());
     return data;
   }
@@ -1025,16 +1024,23 @@ class _ZooMapPageState extends State<ZooMapPage> {
   void _startSimulation() {
     _stopTracking();
 
-    final start = _userLocation ?? kZooGate;
+    // Simulation always starts from the Zoo Main Gate
+    final gatePos = _cachedData?.places
+            .where((p) => p.kind == PlaceKind.gate)
+            .firstOrNull
+            ?.position ??
+        kZooGate;
+    final start = gatePos;
     List<LatLng> route;
 
     if (_navigatingTo != null) {
       route = _router.findPath(start, _navigatingTo!.position);
+      _navigationRoute = route;
     } else {
       final scenicPoints = <LatLng>[];
-      for (int i = 0; i < kSimulationRoute.length; i++) {
+      for (int i = 0; i < kSimulationRoute.length - 1; i++) {
         final pStart = kSimulationRoute[i];
-        final pEnd = kSimulationRoute[(i + 1) % kSimulationRoute.length];
+        final pEnd = kSimulationRoute[i + 1];
         final segment = _router.findPath(pStart, pEnd);
         if (scenicPoints.isEmpty) {
           scenicPoints.addAll(segment);
@@ -1043,6 +1049,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
         }
       }
       route = scenicPoints.length >= 2 ? scenicPoints : kSimulationRoute;
+      _navigationRoute = []; // Blue line is NOT shown during tour simulation
     }
 
     if (route.length < 2) return;
@@ -1052,24 +1059,23 @@ class _ZooMapPageState extends State<ZooMapPage> {
     setState(() {
       _isTracking = true;
       _isSimulating = true;
-      _userLocation = route.first;
+      _userLocation = start;
       _userHeading = initialHeading;
       _followUser = true;
-      _navigationRoute = route;
     });
 
-    _mapController.move(route.first, 17.5);
+    _mapController.move(start, 17.5);
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('🚶‍♂️ রিয়েল ওয়াকিং সিমুলেশন চালু হয়েছে! রাস্তা দিয়ে স্মুথভাবে হাঁটা হচ্ছে...'),
+        content: Text('🚶‍♂️ মেইন গেট থেকে ভার্চুয়াল চিড়িয়াখানা ভ্রমণ সিমুলেশন চালু হয়েছে!'),
         backgroundColor: Palette.primary,
         duration: Duration(seconds: 2),
       ),
     );
 
-    _simulationEngine.speedMultiplier = 2.5;
-    _simulationEngine.startRoute(route, startPos: route.first, loop: _navigatingTo == null);
+    _simulationEngine.speedMultiplier = 8.5; // Fast and smooth simulation
+    _simulationEngine.startRoute(route, startPos: start, loop: _navigatingTo == null);
   }
 
   void _stopTracking() {
@@ -1088,7 +1094,16 @@ class _ZooMapPageState extends State<ZooMapPage> {
   }
 
   void _startNavigation(ZooPlace place) {
-    final start = _userLocation ?? kZooGate;
+    // If live GPS tracking is active (user is physically inside zoo), route from current position.
+    // Otherwise in simulation mode, always start directly from the Main Gate!
+    final gatePos = _cachedData?.places
+            .where((p) => p.kind == PlaceKind.gate)
+            .firstOrNull
+            ?.position ??
+        kZooGate;
+    final start = (_isTracking && !_isSimulating && _userLocation != null)
+        ? _userLocation!
+        : gatePos;
     final roadPath = _router.findPath(start, place.position);
 
     _stopTracking();
@@ -1111,13 +1126,13 @@ class _ZooMapPageState extends State<ZooMapPage> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('🧭 ${place.emoji} ${place.name}-এ যাওয়ার রাস্তা ধরে সিমুলেশন শুরু হয়েছে!'),
+        content: Text('🧭 মেইন গেট থেকে ${place.emoji} ${place.name}-এ যাওয়ার রাস্তা ধরে সিমুলেশন শুরু হয়েছে!'),
         backgroundColor: Palette.accent,
         duration: const Duration(seconds: 3),
       ),
     );
 
-    _simulationEngine.speedMultiplier = 2.5;
+    _simulationEngine.speedMultiplier = 8.5; // Fast and smooth simulation
     _simulationEngine.startRoute(roadPath, startPos: start, loop: false);
   }
 
@@ -1242,8 +1257,8 @@ class _ZooMapPageState extends State<ZooMapPage> {
                     strokeCap: StrokeCap.round,
                     strokeJoin: StrokeJoin.round,
                   ),
-                // Active Navigation Route Line (Following footpaths & roads)
-                if (_navigationRoute.length >= 2) ...[
+                // Active Navigation Route Line (ONLY when guiding to a selected place)
+                if (_navigatingTo != null && _navigationRoute.length >= 2) ...[
                   Polyline(
                     points: _navigationRoute,
                     strokeWidth: 8,
@@ -1496,13 +1511,24 @@ class _TopHeaderBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Palette.primary, Color(0xFFFFB300)]),
-              borderRadius: BorderRadius.circular(16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.asset(
+              'assets/images/logo.png',
+              width: 44,
+              height: 44,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Palette.primary, Color(0xFFFFB300)]),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                alignment: Alignment.center,
+                child: const Text('🐯', style: TextStyle(fontSize: 24)),
+              ),
             ),
-            child: const Text('🦁', style: TextStyle(fontSize: 24)),
           ),
           const SizedBox(width: 10),
           Expanded(

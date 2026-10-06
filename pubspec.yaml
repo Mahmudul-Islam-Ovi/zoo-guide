@@ -24,5 +24,8 @@ flutter:
   assets:
     # The cleaned zoo map data (paths, cages, amenities).
     - assets/map_data/zoo_data.geojson
+    # App branding logo
+    - assets/images/
+    - assets/images/logo.png
     # Optional animal photos. Drop files named like "royal_bengal_tiger.png" here.
     - assets/images/animals/
