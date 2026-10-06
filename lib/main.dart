@@ -25,6 +25,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import 'router.dart';
+import 'simulation.dart';
+
 // ---------------------------------------------------------------------------
 // 1. CONSTANTS & PALETTE
 // ---------------------------------------------------------------------------
@@ -816,8 +819,12 @@ class _ZooMapPageState extends State<ZooMapPage> {
   bool _followUser = false;
   ZooPlace? _navigatingTo;
   StreamSubscription<Position>? _positionSub;
-  Timer? _simulationTimer;
-  int _simulationIndex = 0;
+
+  // Road Routing & Smooth Simulation Engine
+  final ZooGraphRouter _router = ZooGraphRouter();
+  final SmoothSimulationEngine _simulationEngine = SmoothSimulationEngine();
+  List<LatLng> _navigationRoute = [];
+  double? _routeRemainingMeters;
 
   // Search & Filter state
   bool _isSearchOpen = false;
@@ -825,9 +832,48 @@ class _ZooMapPageState extends State<ZooMapPage> {
   String _searchQuery = '';
   String _selectedCategory = 'all';
 
+  @override
+  void initState() {
+    super.initState();
+    _simulationEngine.onLocationUpdate = (position, heading, remainingDist) {
+      if (!mounted) return;
+      setState(() {
+        _userLocation = position;
+        _userHeading = heading;
+        _routeRemainingMeters = remainingDist;
+      });
+      if (_followUser) {
+        _mapController.move(position, _mapController.camera.zoom);
+      }
+    };
+
+    _simulationEngine.onDestinationReached = () {
+      if (!mounted) return;
+      if (_navigatingTo != null) {
+        final dest = _navigatingTo!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎉 আপনি সফলভাবে ${dest.emoji} ${dest.name}-এ পৌঁছে গেছেন!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      setState(() {
+        _isSimulating = false;
+        _isTracking = false;
+        _navigatingTo = null;
+        _navigationRoute = [];
+        _routeRemainingMeters = null;
+      });
+    };
+  }
+
   Future<ZooData> _loadData() async {
     final text = await rootBundle.loadString(kGeoJsonAsset);
-    return ZooData.parse(text);
+    final data = ZooData.parse(text);
+    _router.buildGraph(data.paths.map((p) => p.points).toList());
+    return data;
   }
 
   void _zoomBy(double delta) {
@@ -846,7 +892,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
   @override
   void dispose() {
     _positionSub?.cancel();
-    _simulationTimer?.cancel();
+    _simulationEngine.stop();
     _searchController.dispose();
     _mapController.dispose();
     super.dispose();
@@ -978,69 +1024,111 @@ class _ZooMapPageState extends State<ZooMapPage> {
 
   void _startSimulation() {
     _stopTracking();
+
+    final start = _userLocation ?? kZooGate;
+    List<LatLng> route;
+
+    if (_navigatingTo != null) {
+      route = _router.findPath(start, _navigatingTo!.position);
+    } else {
+      final scenicPoints = <LatLng>[];
+      for (int i = 0; i < kSimulationRoute.length; i++) {
+        final pStart = kSimulationRoute[i];
+        final pEnd = kSimulationRoute[(i + 1) % kSimulationRoute.length];
+        final segment = _router.findPath(pStart, pEnd);
+        if (scenicPoints.isEmpty) {
+          scenicPoints.addAll(segment);
+        } else {
+          scenicPoints.addAll(segment.skip(1));
+        }
+      }
+      route = scenicPoints.length >= 2 ? scenicPoints : kSimulationRoute;
+    }
+
+    if (route.length < 2) return;
+
+    final initialHeading = SmoothSimulationEngine.calculateBearing(route[0], route[1]);
+
     setState(() {
       _isTracking = true;
       _isSimulating = true;
-      _simulationIndex = 0;
-      _userLocation = kSimulationRoute.first;
-      _userHeading = 50.0;
+      _userLocation = route.first;
+      _userHeading = initialHeading;
       _followUser = true;
+      _navigationRoute = route;
     });
 
-    _mapController.move(_userLocation!, 17.5);
+    _mapController.move(route.first, 17.5);
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('🚶‍♂️ ভার্চুয়াল চিড়িয়াখানা ভ্রমণ সিমুলেশন চালু হয়েছে!'),
+        content: Text('🚶‍♂️ রিয়েল ওয়াকিং সিমুলেশন চালু হয়েছে! রাস্তা দিয়ে স্মুথভাবে হাঁটা হচ্ছে...'),
         backgroundColor: Palette.primary,
+        duration: Duration(seconds: 2),
       ),
     );
 
-    _simulationTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
-      if (!mounted) return;
-      setState(() {
-        _simulationIndex = (_simulationIndex + 1) % kSimulationRoute.length;
-        _userLocation = kSimulationRoute[_simulationIndex];
-      });
-      if (_followUser && _userLocation != null) {
-        _mapController.move(_userLocation!, _mapController.camera.zoom);
-      }
-    });
+    _simulationEngine.speedMultiplier = 2.5;
+    _simulationEngine.startRoute(route, startPos: route.first, loop: _navigatingTo == null);
   }
 
   void _stopTracking() {
     _positionSub?.cancel();
     _positionSub = null;
-    _simulationTimer?.cancel();
-    _simulationTimer = null;
+    _simulationEngine.stop();
     setState(() {
       _isTracking = false;
       _isSimulating = false;
       _followUser = false;
+      if (_navigatingTo == null) {
+        _navigationRoute = [];
+        _routeRemainingMeters = null;
+      }
     });
   }
 
   void _startNavigation(ZooPlace place) {
+    final start = _userLocation ?? kZooGate;
+    final roadPath = _router.findPath(start, place.position);
+
+    _stopTracking();
+
+    final initialHeading = roadPath.length >= 2
+        ? SmoothSimulationEngine.calculateBearing(roadPath[0], roadPath[1])
+        : 50.0;
+
     setState(() {
       _navigatingTo = place;
+      _navigationRoute = roadPath;
+      _isTracking = true;
+      _isSimulating = true;
+      _userLocation = start;
+      _userHeading = initialHeading;
+      _followUser = true;
     });
-    // If not tracking, activate simulation so navigation is visible immediately
-    if (_userLocation == null) {
-      _startSimulation();
-    }
-    _mapController.move(place.position, 17.5);
+
+    _mapController.move(start, 17.5);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('🧭 ${place.emoji} ${place.name}-এ যাওয়ার পথ দেখানো হচ্ছে'),
+        content: Text('🧭 ${place.emoji} ${place.name}-এ যাওয়ার রাস্তা ধরে সিমুলেশন শুরু হয়েছে!'),
         backgroundColor: Palette.accent,
+        duration: const Duration(seconds: 3),
       ),
     );
+
+    _simulationEngine.speedMultiplier = 2.5;
+    _simulationEngine.startRoute(roadPath, startPos: start, loop: false);
   }
 
   void _stopNavigation() {
+    _simulationEngine.stop();
     setState(() {
       _navigatingTo = null;
+      _navigationRoute = [];
+      _routeRemainingMeters = null;
+      _isSimulating = false;
+      _isTracking = false;
     });
   }
 
@@ -1086,9 +1174,9 @@ class _ZooMapPageState extends State<ZooMapPage> {
       return true;
     }).toList(growable: false);
 
-    // Active navigation distance calculation
-    double? navDistance;
-    if (_navigatingTo != null && _userLocation != null) {
+    // Active navigation distance calculation (uses exact road network distance)
+    double? navDistance = _routeRemainingMeters;
+    if (navDistance == null && _navigatingTo != null && _userLocation != null) {
       navDistance = const Distance().as(
         LengthUnit.Meter,
         _userLocation!,
@@ -1154,17 +1242,23 @@ class _ZooMapPageState extends State<ZooMapPage> {
                     strokeCap: StrokeCap.round,
                     strokeJoin: StrokeJoin.round,
                   ),
-                // Active Navigation Route Line
-                if (_navigatingTo != null && _userLocation != null)
+                // Active Navigation Route Line (Following footpaths & roads)
+                if (_navigationRoute.length >= 2) ...[
                   Polyline(
-                    points: [_userLocation!, _navigatingTo!.position],
-                    strokeWidth: 6,
-                    color: Palette.accent,
-                    borderColor: Colors.white,
-                    borderStrokeWidth: 2,
+                    points: _navigationRoute,
+                    strokeWidth: 8,
+                    color: Colors.white.withOpacity(0.9),
                     strokeCap: StrokeCap.round,
                     strokeJoin: StrokeJoin.round,
                   ),
+                  Polyline(
+                    points: _navigationRoute,
+                    strokeWidth: 5,
+                    color: Palette.accent,
+                    strokeCap: StrokeCap.round,
+                    strokeJoin: StrokeJoin.round,
+                  ),
+                ],
               ],
             ),
             // Markers
