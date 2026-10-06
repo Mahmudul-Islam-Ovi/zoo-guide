@@ -97,9 +97,19 @@ class SmoothSimulationEngine {
     // Distance covered in this single frame (e.g. 1.4 m/s * 1.5 * 0.04s = ~0.084 meters)
     final stepDistance = baseSpeedMps * speedMultiplier * (tickMs / 1000.0);
 
-    // Target bearing towards next waypoint
-    final targetHeading = calculateBearing(_currentPosition!, targetPoint);
-    _currentHeading = _lerpAngle(_currentHeading, targetHeading, 0.2);
+    // Look ahead at least 3.0 meters along the route for a stable, jitter-free heading
+    LatLng lookAhead = targetPoint;
+    double lookDist = distToTarget;
+    int nextIdx = targetIndex;
+    while (lookDist < 3.0 && nextIdx + 1 < _route.length) {
+      nextIdx++;
+      lookDist += _distance.as(LengthUnit.Meter, _route[nextIdx - 1], _route[nextIdx]);
+      lookAhead = _route[nextIdx];
+    }
+    if (_distance.as(LengthUnit.Meter, _currentPosition!, lookAhead) >= 0.5) {
+      final targetHeading = calculateBearing(_currentPosition!, lookAhead);
+      _currentHeading = _lerpAngle(_currentHeading, targetHeading, 0.2);
+    }
 
     if (distToTarget <= stepDistance) {
       // Reached this waypoint, step to the next one

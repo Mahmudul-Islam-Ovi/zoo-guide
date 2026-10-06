@@ -116,6 +116,17 @@ class ZooGraphRouter {
     }
 
     final reversed = path.reversed.toList();
+
+    // Prevent turning backwards if start is already closer to the next node
+    if (reversed.length >= 2) {
+      final distToFirst = _distance.as(LengthUnit.Meter, start, reversed[0]);
+      final distToSecond = _distance.as(LengthUnit.Meter, start, reversed[1]);
+      final distBetweenNodes = _distance.as(LengthUnit.Meter, reversed[0], reversed[1]);
+      if (distToSecond < distBetweenNodes || distToFirst < 2.0) {
+        reversed.removeAt(0);
+      }
+    }
+
     final result = <LatLng>[start];
     result.addAll(reversed);
     result.add(destination);
@@ -127,7 +138,7 @@ class ZooGraphRouter {
     if (raw.length <= 2) return raw;
     final cleaned = <LatLng>[raw.first];
     for (int i = 1; i < raw.length; i++) {
-      if (_distance.as(LengthUnit.Meter, cleaned.last, raw[i]) > 0.5) {
+      if (_distance.as(LengthUnit.Meter, cleaned.last, raw[i]) > 1.2) {
         cleaned.add(raw[i]);
       }
     }

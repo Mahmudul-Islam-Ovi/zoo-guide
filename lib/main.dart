@@ -1024,7 +1024,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
   void _startSimulation() {
     _stopTracking();
 
-    // Simulation always starts from the Zoo Main Gate
+    // Simulation starts from the Zoo Main Gate
     final gatePos = _cachedData?.places
             .where((p) => p.kind == PlaceKind.gate)
             .firstOrNull
@@ -1037,18 +1037,25 @@ class _ZooMapPageState extends State<ZooMapPage> {
       route = _router.findPath(start, _navigatingTo!.position);
       _navigationRoute = route;
     } else {
+      // Clean tour loop without looping back-and-forth
+      const tourWaypoints = [
+        LatLng(23.812549, 90.346991), // Main gate
+        LatLng(23.8135, 90.3475),     // Central junction
+        LatLng(23.8158, 90.3473),     // Tiger area
+        LatLng(23.8156, 90.3457),     // Carnivores
+        LatLng(23.8136, 90.3459),     // Monkeys
+        LatLng(23.812549, 90.346991), // Back to Main gate
+      ];
       final scenicPoints = <LatLng>[];
-      for (int i = 0; i < kSimulationRoute.length - 1; i++) {
-        final pStart = kSimulationRoute[i];
-        final pEnd = kSimulationRoute[i + 1];
-        final segment = _router.findPath(pStart, pEnd);
+      for (int i = 0; i < tourWaypoints.length - 1; i++) {
+        final segment = _router.findPath(tourWaypoints[i], tourWaypoints[i + 1]);
         if (scenicPoints.isEmpty) {
           scenicPoints.addAll(segment);
-        } else {
+        } else if (segment.isNotEmpty) {
           scenicPoints.addAll(segment.skip(1));
         }
       }
-      route = scenicPoints.length >= 2 ? scenicPoints : kSimulationRoute;
+      route = scenicPoints.length >= 2 ? scenicPoints : tourWaypoints;
       _navigationRoute = []; // Blue line is NOT shown during tour simulation
     }
 
@@ -1082,35 +1089,44 @@ class _ZooMapPageState extends State<ZooMapPage> {
     _positionSub?.cancel();
     _positionSub = null;
     _simulationEngine.stop();
-    setState(() {
-      _isTracking = false;
-      _isSimulating = false;
-      _followUser = false;
-      if (_navigatingTo == null) {
-        _navigationRoute = [];
-        _routeRemainingMeters = null;
-      }
-    });
-  }
 
-  void _startNavigation(ZooPlace place) {
-    // If live GPS tracking is active (user is physically inside zoo), route from current position.
-    // Otherwise in simulation mode, always start directly from the Main Gate!
     final gatePos = _cachedData?.places
             .where((p) => p.kind == PlaceKind.gate)
             .firstOrNull
             ?.position ??
         kZooGate;
-    final start = (_isTracking && !_isSimulating && _userLocation != null)
-        ? _userLocation!
-        : gatePos;
+
+    setState(() {
+      _isTracking = false;
+      _isSimulating = false;
+      _followUser = false;
+      _navigatingTo = null;
+      _navigationRoute = [];
+      _routeRemainingMeters = null;
+      // When simulation is turned off, the point automatically moves back to Main Gate!
+      _userLocation = gatePos;
+      _userHeading = 0.0;
+    });
+
+    _mapController.move(gatePos, _mapController.camera.zoom);
+  }
+
+  void _startNavigation(ZooPlace place) {
+    final gatePos = _cachedData?.places
+            .where((p) => p.kind == PlaceKind.gate)
+            .firstOrNull
+            ?.position ??
+        kZooGate;
+    // Start from wherever the point currently is!
+    final start = _userLocation ?? gatePos;
     final roadPath = _router.findPath(start, place.position);
 
-    _stopTracking();
+    // Stop previous movement without resetting location
+    _simulationEngine.stop();
 
     final initialHeading = roadPath.length >= 2
         ? SmoothSimulationEngine.calculateBearing(roadPath[0], roadPath[1])
-        : 50.0;
+        : (_userHeading ?? 0.0);
 
     setState(() {
       _navigatingTo = place;
@@ -1126,7 +1142,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('🧭 মেইন গেট থেকে ${place.emoji} ${place.name}-এ যাওয়ার রাস্তা ধরে সিমুলেশন শুরু হয়েছে!'),
+        content: Text('🧭 ${place.emoji} ${place.name}-এ যাওয়ার রাস্তা ধরে সিমুলেশন শুরু হয়েছে!'),
         backgroundColor: Palette.accent,
         duration: const Duration(seconds: 3),
       ),
@@ -1137,14 +1153,7 @@ class _ZooMapPageState extends State<ZooMapPage> {
   }
 
   void _stopNavigation() {
-    _simulationEngine.stop();
-    setState(() {
-      _navigatingTo = null;
-      _navigationRoute = [];
-      _routeRemainingMeters = null;
-      _isSimulating = false;
-      _isTracking = false;
-    });
+    _stopTracking();
   }
 
   @override
